@@ -79,6 +79,7 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
     private ChannelFutureListener closeListener;
     private BaseDecoder byteDecoder;
     private long gracefulShutdownTimeoutMillis;
+    private boolean sendPrefaceOnHandlerAdded = true;
 
     protected Http2ConnectionHandler(Http2ConnectionDecoder decoder, Http2ConnectionEncoder encoder,
                                      Http2Settings initialSettings) {
@@ -107,6 +108,14 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
         }
         encoder = new DefaultHttp2ConnectionEncoder(connection, frameWriter);
         decoder = new DefaultHttp2ConnectionDecoder(connection, encoder, frameReader);
+    }
+
+    void sendPrefaceOnHandlerAdded(boolean sendPrefaceOnHandlerAdded) {
+        this.sendPrefaceOnHandlerAdded = sendPrefaceOnHandlerAdded;
+    }
+
+    boolean sendPrefaceOnHandlerAdded() {
+        return sendPrefaceOnHandlerAdded;
     }
 
     /**
@@ -162,6 +171,7 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
 
         // Create a local stream used for the HTTP cleartext upgrade.
         connection().local().createStream(HTTP_UPGRADE_STREAM_ID, true);
+        sendPreface();
     }
 
     /**
@@ -181,6 +191,7 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
 
         // Create a stream in the half-closed state.
         connection().remote().createStream(HTTP_UPGRADE_STREAM_ID, true);
+        sendPreface();
     }
 
     @Override
@@ -220,14 +231,13 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
     }
 
     private final class PrefaceDecoder extends BaseDecoder {
+        private final ChannelHandlerContext ctx;
         private ByteBuf clientPrefaceString;
         private boolean prefaceSent;
 
         public PrefaceDecoder(ChannelHandlerContext ctx) {
+            this.ctx = ctx;
             clientPrefaceString = clientPrefaceString(encoder.connection());
-            // This handler was just added to the context. In case it was handled after
-            // the connection became active, send the connection preface now.
-            sendPreface(ctx);
         }
 
         @Override
@@ -251,7 +261,7 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
         @Override
         public void channelActive(ChannelHandlerContext ctx) throws Exception {
             // The channel just became active - send the connection preface to the remote endpoint.
-            sendPreface(ctx);
+            sendPreface();
         }
 
         @Override
@@ -347,7 +357,7 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
         /**
          * Sends the HTTP/2 connection preface upon establishment of the connection, if not already sent.
          */
-        private void sendPreface(ChannelHandlerContext ctx) {
+        void sendPreface() {
             if (prefaceSent || !ctx.channel().isActive()) {
                 return;
             }
@@ -377,6 +387,12 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
         }
     }
 
+    private void sendPreface() {
+        if (byteDecoder instanceof PrefaceDecoder) {
+            ((PrefaceDecoder) byteDecoder).sendPreface();
+        }
+    }
+
     @Override
     public void handlerAdded(ChannelHandlerContext ctx) throws Exception {
         // Initialize the encoder, decoder, flow controllers, and internal state.
@@ -385,6 +401,12 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
         encoder.flowController().channelHandlerContext(ctx);
         decoder.flowController().channelHandlerContext(ctx);
         byteDecoder = new PrefaceDecoder(ctx);
+
+        if (sendPrefaceOnHandlerAdded) {
+            // This handler was just added to the context. In case it was handled after
+            // the connection became active, send the connection preface now.
+            sendPreface();
+        }
     }
 
     @Override
@@ -397,9 +419,7 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
 
     @Override
     public void channelActive(ChannelHandlerContext ctx) throws Exception {
-        if (byteDecoder == null) {
-            byteDecoder = new PrefaceDecoder(ctx);
-        }
+        // This cant be null as we construct it in handlerAdded(...)
         byteDecoder.channelActive(ctx);
         super.channelActive(ctx);
     }

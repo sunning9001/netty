@@ -25,8 +25,6 @@ import static io.netty.handler.codec.http2.Http2CodecUtil.DEFAULT_MAX_RESERVED_S
 import static io.netty.util.internal.ObjectUtil.checkNotNull;
 import static io.netty.util.internal.ObjectUtil.checkPositive;
 import static io.netty.util.internal.ObjectUtil.checkPositiveOrZero;
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
-import static java.util.concurrent.TimeUnit.SECONDS;
 
 /**
  * Abstract base class which defines commonly used features required to build {@link Http2ConnectionHandler} instances.
@@ -106,6 +104,23 @@ public abstract class AbstractHttp2ConnectionHandlerBuilder<T extends Http2Conne
     private Boolean encoderEnforceMaxConcurrentStreams;
     private Boolean encoderIgnoreMaxHeaderListSize;
     private int initialHuffmanDecodeCapacity = DEFAULT_INITIAL_HUFFMAN_DECODE_CAPACITY;
+    private boolean httpClearTextUpgrade;
+
+    /**
+     * Returns {@code true} if the returned {@link Http2ConnectionHandler} should be added for a {@code h2c} upgrade.
+     */
+    protected boolean httpClearTextUpgrade() {
+        return httpClearTextUpgrade;
+    }
+
+    /**
+     * Specify if the preface should be send once the channel become active. If you want to do a clear-
+     * text http upgrade this should be {@code false}.
+     */
+    protected B httpClearTextUpgrade(boolean httpClearTextUpgrade) {
+        this.httpClearTextUpgrade = httpClearTextUpgrade;
+        return self();
+    }
 
     /**
      * Sets the {@link Http2Settings} to use for the initial connection settings exchange.
@@ -425,6 +440,7 @@ public abstract class AbstractHttp2ConnectionHandlerBuilder<T extends Http2Conne
         }
 
         // Setup post build options
+        handler.sendPrefaceOnHandlerAdded(!httpClearTextUpgrade);
         handler.gracefulShutdownTimeoutMillis(gracefulShutdownTimeoutMillis);
         if (handler.decoder().frameListener() == null) {
             handler.decoder().frameListener(frameListener);
